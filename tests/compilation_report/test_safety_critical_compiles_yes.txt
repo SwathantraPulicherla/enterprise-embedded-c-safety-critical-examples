@@ -1,0 +1,9 @@
+Validation Report for test_safety_critical.c
+Quality: Medium
+Compiles: True
+Realistic: True
+Issues: 2
+
+Issues:
+- Test test_39: contradictory assertions for variables {'fm.system_degraded'}
+- Test test_40: contradictory assertions for variables {'fm.system_failed'}
