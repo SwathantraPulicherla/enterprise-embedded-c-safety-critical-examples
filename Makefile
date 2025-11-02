@@ -1,8 +1,8 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99
 TARGET = temperature_monitor
-SOURCES = main.c sensor.c utils.c embedded_hardware.c communication_protocols.c device_drivers.c safety_critical.c
-HEADERS = sensor.h utils.h embedded_hardware.h communication_protocols.h device_drivers.h safety_critical.h
+SOURCES = main.c src/sensor.c src/utils.c src/embedded_hardware.c src/communication_protocols.c src/device_drivers.c src/safety_critical.c
+HEADERS = src/sensor.h src/utils.h src/embedded_hardware.h src/communication_protocols.h src/device_drivers.h src/safety_critical.h
 
 $(TARGET): $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
