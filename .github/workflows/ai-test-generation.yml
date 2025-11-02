@@ -89,12 +89,7 @@ jobs:
         
         # Generate tests with same quality settings as local development
         echo "[WORKFLOW] Calling ai-c-testgen..."
-        if command -v ai-c-testgen > /dev/null 2>&1; then
-          ai-c-testgen --api-key "$GEMINI_API_KEY" --source-dir src/ --regenerate-on-low-quality --max-regeneration-attempts 3 --quality-threshold high --redact-sensitive --verbose
-        else
-          echo "[FALLBACK] Using python -m instead of ai-c-testgen command"
-          python -m ai_c_test_generator.cli --api-key "$GEMINI_API_KEY" --source-dir src/ --regenerate-on-low-quality --max-regeneration-attempts 3 --quality-threshold high --redact-sensitive --verbose
-        fi
+        python -m ai_c_test_generator.cli --api-key "$GEMINI_API_KEY" --source-dir src/ --regenerate-on-low-quality --max-regeneration-attempts 3 --quality-threshold high --redact-sensitive --verbose
         echo "[WORKFLOW] Test generation completed!"
       timeout-minutes: 90
 
