@@ -46,14 +46,34 @@ jobs:
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
+        set -x  # Enable command echoing for debugging
         cd target-repo
+        
+        echo "[WORKFLOW] Starting test generation..."
+        
         # Clean up old test artifacts before generation
-        rm -rf tests/compilation_report/
-        rm -rf tests/test_reports/
-        # Force regeneration by removing existing test files (they will be regenerated with quality checks)
-        rm -f tests/test_*.c
+        echo "[WORKFLOW] Cleaning up old artifacts..."
+        rm -rf tests
+        mkdir -p tests
+        
+        # Verify API key is set
+        if [ -z "$GEMINI_API_KEY" ]; then
+          echo "[ERROR] GEMINI_API_KEY is not set!"
+          exit 1
+        fi
+        
         # Generate tests with same quality settings as local development
-        ai-c-testgen --api-key "$GEMINI_API_KEY" --source-dir src/ --regenerate-on-low-quality --max-regeneration-attempts 3 --quality-threshold high --redact-sensitive --verbose
+        echo "[WORKFLOW] Calling ai-c-testgen..."
+        ai-c-testgen \
+          --source-dir src \
+          --verbose \
+          --regenerate-on-low-quality \
+          --max-regeneration-attempts 3 \
+          --quality-threshold high \
+          --redact-sensitive
+        
+        echo "[WORKFLOW] Test generation completed!"
+      timeout-minutes: 90
 
     - name: Show validation reports
       run: |

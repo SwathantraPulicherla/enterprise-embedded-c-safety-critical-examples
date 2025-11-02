@@ -1,0 +1,8 @@
+Validation Report for test_embedded_hardware.c
+Quality: Medium
+Compiles: True
+Realistic: True
+Issues: 1
+
+Issues:
+- Source has state machine but tests don't verify state transitions
