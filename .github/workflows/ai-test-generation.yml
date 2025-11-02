@@ -55,9 +55,15 @@ jobs:
         
         # Clean up old test artifacts before generation (don't fail if they don't exist)
         echo "[WORKFLOW] Cleaning up old artifacts..."
-        rm -rf tests/compilation_report/ || true
-        rm -rf tests/test_reports/ || true
-        rm -f tests/test_*.c || true
+        if [ -d tests ]; then
+          echo "[WORKFLOW] Existing tests directory contents before cleanup:" 
+          find tests -maxdepth 2 -type f -print || true
+          chmod -R u+w tests || true
+        fi
+        rm -rf tests || true
+        mkdir -p tests || true
+        echo "[WORKFLOW] Tests directory cleaned. Current contents:"
+        ls -R tests || true
         
         # Verify API key is set
         if [ -z "$GEMINI_API_KEY" ]; then
