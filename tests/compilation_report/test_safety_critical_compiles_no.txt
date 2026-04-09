@@ -1,0 +1,10 @@
+Validation Report for test_safety_critical.c
+Quality: Low
+Compiles: False
+Realistic: True
+Issues: 3
+
+Issues:
+- Duplicate function definitions: ['for', 'for']
+- Test test_39: contradictory assertions for variables {'fm.system_degraded'}
+- Test test_40: contradictory assertions for variables {'fm.system_failed'}

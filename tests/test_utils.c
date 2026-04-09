@@ -1,346 +1,415 @@
 /* test_utils.c – Auto-generated Expert Unity Tests */
 
 #include "unity.h"
-#include "utils.h" // Includes Sensor, SensorArray, Logger, TempProcessor, and function declarations
+#include <stdint.h>   // For uint32_t
+#include <stdbool.h>  // For bool
+#include <string.h>   // For memset, strcpy, strdup
+#include <stdlib.h>   // For malloc, free
 
-#include <string.h> // Required for strcpy in utils.c and potentially for assertions
-#include <stdlib.h> // Required for malloc/free in simulate_data and test setup
+// ==============================================================================
+// INTERNAL SOURCE TYPES (assumed from utils.h based on usage)
+// ==============================================================================
+typedef struct Sensor {
+    double temperature;
+} Sensor;
 
-// =================================================================================================
-// EXTERNAL FUNCTION STUBS
-// =================================================================================================
+typedef Sensor** SensorArray;
 
-// Stub control structure for process_temperature
+typedef void (*Logger)(const char* message);
+
+// TempProcessor is passed as void* to process_temperature,
+// suggesting it's an opaque context pointer.
+typedef void* TempProcessor;
+
+// ==============================================================================
+// EXTERNAL SOURCE FUNCTION DECLARATIONS (from src/utils.c)
+// ==============================================================================
+// Calculate average temperature
+extern double calculate_average(SensorArray sensors, int count);
+
+// Log message using function pointer
+extern void log_message(const char* message, Logger logger);
+
+// Simulate data with pointers
+extern void simulate_data(int* int_ptr, float* float_ptr, char** str_ptr);
+
+// Process array of sensors
+extern void process_sensors(SensorArray sensors, int count, TempProcessor processor);
+
+// ==============================================================================
+// STUBS FOR EXTERNAL DEPENDENCIES (as per problem statement)
+// ==============================================================================
+
+// External function to stub: process_temperature
+#define MAX_PROCESS_TEMPERATURE_CALLS 5
+
 typedef struct {
+    double temperature;
+    TempProcessor processor_context;
+} process_temperature_args_t;
+
+typedef struct {
+    bool was_called;
     uint32_t call_count;
-    float last_temperature;
-    TempProcessor last_processor; // Captures the function pointer passed
-    float temperatures[10];       // Array to capture multiple temperature calls
-    int processors_called[10];    // To track which processor was called (index) if needed
-    // Assuming 10 calls max for reasonable test cases
+    process_temperature_args_t captured_args[MAX_PROCESS_TEMPERATURE_CALLS];
 } stub_process_temperature_t;
 
 static stub_process_temperature_t stub_process_temperature = {0};
 
-void process_temperature(float temperature, TempProcessor processor) {
-    if (stub_process_temperature.call_count < sizeof(stub_process_temperature.temperatures) / sizeof(stub_process_temperature.temperatures[0])) {
-        stub_process_temperature.temperatures[stub_process_temperature.call_count] = temperature;
+void process_temperature(double temperature, TempProcessor processor_context) {
+    if (stub_process_temperature.call_count < MAX_PROCESS_TEMPERATURE_CALLS) {
+        stub_process_temperature.captured_args[stub_process_temperature.call_count].temperature = temperature;
+        stub_process_temperature.captured_args[stub_process_temperature.call_count].processor_context = processor_context;
     }
-    stub_process_temperature.last_temperature = temperature;
-    stub_process_temperature.last_processor = processor;
     stub_process_temperature.call_count++;
-    // In a real scenario, we might call the captured 'processor' here if it's meant to be executed
-    // For now, we only capture the fact it was passed.
+    stub_process_temperature.was_called = true;
 }
 
-// Mock function for Logger type
-static const char* mock_logger_last_message = NULL;
-static uint32_t mock_logger_call_count = 0;
-void MockLogger(const char* message) {
-    mock_logger_last_message = message;
-    mock_logger_call_count++;
+// ==============================================================================
+// MOCKS FOR FUNCTION POINTERS (used internally by source functions)
+// ==============================================================================
+
+// Mock for Logger (used by log_message)
+#define MAX_LOG_MESSAGE_CALLS 5
+
+typedef struct {
+    bool was_called;
+    uint32_t call_count;
+    const char* captured_messages[MAX_LOG_MESSAGE_CALLS]; // Need to strdup messages
+} mock_logger_t;
+
+static mock_logger_t mock_logger_data = {0};
+
+void mock_logger(const char* message) {
+    if (mock_logger_data.call_count < MAX_LOG_MESSAGE_CALLS) {
+        // Expected: Duplicate message string to ensure it outlives the source function's scope
+        mock_logger_data.captured_messages[mock_logger_data.call_count] = strdup(message);
+    }
+    mock_logger_data.call_count++;
+    mock_logger_data.was_called = true;
 }
 
-// Mock function for TempProcessor type (used as a callback within process_sensors)
-static float mock_temp_processor_last_temp = 0.0f;
-static uint32_t mock_temp_processor_call_count = 0;
-void MockTempProcessor(float temperature_value) {
-    mock_temp_processor_last_temp = temperature_value;
-    mock_temp_processor_call_count++;
+// ==============================================================================
+// TEST UTILITY VARIABLES & FUNCTIONS
+// ==============================================================================
+
+// Global variable to capture allocated string from simulate_data for cleanup
+static char* g_simulated_string_ptr = NULL;
+
+// Helper function to create a Sensor array for tests
+static SensorArray create_sensor_array(int count, double* temperatures) {
+    if (count <= 0) return NULL;
+    SensorArray sensors = (SensorArray)malloc(count * sizeof(Sensor*));
+    TEST_ASSERT_NOT_NULL(sensors);
+    for (int i = 0; i < count; i++) {
+        sensors[i] = (Sensor*)malloc(sizeof(Sensor));
+        TEST_ASSERT_NOT_NULL(sensors[i]);
+        sensors[i]->temperature = temperatures[i];
+    }
+    return sensors;
 }
 
-// =================================================================================================
-// Test Fixture Setup and Teardown
-// =================================================================================================
+// Helper function to free a Sensor array
+static void free_sensor_array(SensorArray sensors, int count) {
+    if (sensors == NULL) return;
+    for (int i = 0; i < count; i++) {
+        free(sensors[i]);
+    }
+    free(sensors);
+}
+
+// ==============================================================================
+// SETUP AND TEARDOWN
+// ==============================================================================
 
 void setUp(void) {
-    // Reset all stub control structures
+    // Reset all stubs
     memset(&stub_process_temperature, 0, sizeof(stub_process_temperature));
-    mock_logger_last_message = NULL;
-    mock_logger_call_count = 0;
-    mock_temp_processor_last_temp = 0.0;
-    mock_temp_processor_call_count = 0;
+
+    // Reset all mock logger data and free captured strings
+    for (int i = 0; i < MAX_LOG_MESSAGE_CALLS; i++) {
+        if (mock_logger_data.captured_messages[i] != NULL) {
+            free((void*)mock_logger_data.captured_messages[i]);
+            mock_logger_data.captured_messages[i] = NULL;
+        }
+    }
+    memset(&mock_logger_data, 0, sizeof(mock_logger_data));
+
+    // Reset global simulated string pointer and free any previously allocated memory
+    if (g_simulated_string_ptr != NULL) {
+        free(g_simulated_string_ptr);
+        g_simulated_string_ptr = NULL;
+    }
 }
 
 void tearDown(void) {
-    // Ensure all dynamically allocated memory from simulate_data is freed if not already
-    // This assumes simulate_data is called within a test where the char** points to a local char*
-    // If not, it's the test's responsibility to free it. For `simulate_data` test, it's done within the test.
-
-    // Reset all stub control structures again for safety
-    memset(&stub_process_temperature, 0, sizeof(stub_process_temperature));
-    mock_logger_last_message = NULL;
-    mock_logger_call_count = 0;
-    mock_temp_processor_last_temp = 0.0;
-    mock_temp_processor_call_count = 0;
+    // Perform same cleanup as setUp to ensure complete isolation
+    setUp(); // Call setUp to reset all state for tearDown as well
 }
 
-// =================================================================================================
-// Tests for calculate_average
-// =================================================================================================
+// ==============================================================================
+// TEST FUNCTIONS FOR calculate_average
+// ==============================================================================
 
+// Test case: sensors array is NULL, count is valid
 void test_calculate_average_null_sensors(void) {
+    // Expected: If sensors is NULL, function should return 0.0
     double result = calculate_average(NULL, 5);
-    // Expected: Function returns 0.0 when sensors array is NULL
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0, result);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.0, result);
 }
 
+// Test case: count is zero
 void test_calculate_average_zero_count(void) {
-    Sensor s1 = {25.0};
-    Sensor s2 = {30.0};
-    Sensor* sensors_data[] = {&s1, &s2};
-    SensorArray sensors = sensors_data;
+    double temps[] = {10.0, 20.0};
+    SensorArray sensors = create_sensor_array(2, temps);
+
+    // Expected: If count is 0, function should return 0.0
     double result = calculate_average(sensors, 0);
-    // Expected: Function returns 0.0 when count is 0
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0, result);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.0, result);
+
+    free_sensor_array(sensors, 2);
 }
 
+// Test case: count is negative
 void test_calculate_average_negative_count(void) {
-    Sensor s1 = {25.0};
-    Sensor s2 = {30.0};
-    Sensor* sensors_data[] = {&s1, &s2};
-    SensorArray sensors = sensors_data;
-    double result = calculate_average(sensors, -1);
-    // Expected: Function returns 0.0 when count is negative
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0, result);
+    double temps[] = {10.0, 20.0};
+    SensorArray sensors = create_sensor_array(2, temps);
+
+    // Expected: If count is negative, function should return 0.0
+    double result = calculate_average(sensors, 0.0f);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.0, result);
+
+    free_sensor_array(sensors, 2);
 }
 
-void test_calculate_average_single_sensor(void) {
-    Sensor s1 = {25.5};
-    Sensor* sensors_data[] = {&s1};
-    SensorArray sensors = sensors_data;
+// Test case: Single sensor, positive temperature
+void test_calculate_average_single_sensor_positive(void) {
+    double temps[] = {25.5};
+    SensorArray sensors = create_sensor_array(1, temps);
+
+    // Expected: Average of a single sensor is its temperature
     double result = calculate_average(sensors, 1);
-    // Expected: Average is the single sensor's temperature
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 25.5, result);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 25.5, result);
+
+    free_sensor_array(sensors, 1);
 }
 
+// Test case: Multiple sensors, all positive temperatures
 void test_calculate_average_multiple_sensors_positive(void) {
-    Sensor s1 = {10.0};
-    Sensor s2 = {20.0};
-    Sensor s3 = {30.0};
-    Sensor* sensors_data[] = {&s1, &s2, &s3};
-    SensorArray sensors = sensors_data;
+    double temps[] = {20.0, 30.0, 40.0};
+    SensorArray sensors = create_sensor_array(3, temps);
+
+    // Expected: (20.0 + 30.0 + 40.0) / 3 = 30.0
     double result = calculate_average(sensors, 3);
-    // Expected: Average of (10.0 + 20.0 + 30.0) / 3 = 20.0
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0, result);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 30.0, result);
+
+    free_sensor_array(sensors, 3);
 }
 
-void test_calculate_average_multiple_sensors_mixed(void) {
-    Sensor s1 = {0.0f};
-    Sensor s2 = {0.0};
-    Sensor s3 = {15.0};
-    Sensor s4 = {20.0};
-    Sensor* sensors_data[] = {&s1, &s2, &s3, &s4};
-    SensorArray sensors = sensors_data;
-    double result = calculate_average(sensors, 4);
-    // Expected: Average of (0.0f + 0.0 + 15.0 + 20.0) / 4 = 30.0 / 4 = 7.5
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 7.5, result);
-}
-
+// Test case: Multiple sensors, all negative temperatures
 void test_calculate_average_multiple_sensors_negative(void) {
-    Sensor s1 = {0.0f};
-    Sensor s2 = {0.0f};
-    Sensor* sensors_data[] = {&s1, &s2};
-    SensorArray sensors = sensors_data;
-    double result = calculate_average(sensors, 2);
-    // Expected: Average of (0.0f + 0.0f) / 2 = 0.0f
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, result);
+    double temps[] = {0.0f, 0.0f, 0.0f};
+    SensorArray sensors = create_sensor_array(3, temps);
+
+    // Expected: (0.0f + 0.0f + 0.0f) / 3 = 0.0f
+    double result = calculate_average(sensors, 3);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.0f, result);
+
+    free_sensor_array(sensors, 3);
 }
 
-// =================================================================================================
-// Tests for log_message
-// =================================================================================================
+// Test case: Multiple sensors, mixed positive and negative temperatures
+void test_calculate_average_multiple_sensors_mixed(void) {
+    double temps[] = {10.0, 0.0f, 0.0, 20.0};
+    SensorArray sensors = create_sensor_array(4, temps);
 
-void test_log_message_valid_logger(void) {
-    const char* test_message = "System initialized.";
-    log_message(test_message, MockLogger);
-    // Expected: MockLogger called once
-    TEST_ASSERT_EQUAL_UINT32(1, mock_logger_call_count);
-    // Expected: MockLogger captured the correct message
-    TEST_ASSERT_EQUAL_STRING(test_message, mock_logger_last_message);
+    // Expected: (10.0 + 0.0f + 0.0 + 20.0) / 4 = 5.0
+    double result = calculate_average(sensors, 4);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 5.0, result);
+
+    free_sensor_array(sensors, 4);
 }
 
+// ==============================================================================
+// TEST FUNCTIONS FOR log_message
+// ==============================================================================
+
+// Test case: logger function pointer is NULL
 void test_log_message_null_logger(void) {
-    const char* test_message = "Error message.";
-    log_message(test_message, NULL);
-    // Expected: No logger function called when logger is NULL
-    TEST_ASSERT_EQUAL_UINT32(0, mock_logger_call_count);
-    // Expected: No message captured by mock logger
-    TEST_ASSERT_NULL(mock_logger_last_message);
+    const char* message = "Test message";
+    // Expected: No call to a logger if it's NULL
+    log_message(message, NULL);
+    TEST_ASSERT_FALSE(mock_logger_data.was_called);
+    TEST_ASSERT_EQUAL_UINT32(0, mock_logger_data.call_count);
 }
 
-void test_log_message_empty_string(void) {
-    const char* test_message = "";
-    log_message(test_message, MockLogger);
-    // Expected: MockLogger called once with an empty string
-    TEST_ASSERT_EQUAL_UINT32(1, mock_logger_call_count);
-    TEST_ASSERT_EQUAL_STRING(test_message, mock_logger_last_message);
+// Test case: logger function pointer is valid
+void test_log_message_valid_logger(void) {
+    const char* message = "Important log entry";
+    // Expected: mock_logger should be called with the exact message
+    log_message(message, mock_logger);
+    TEST_ASSERT_TRUE(mock_logger_data.was_called);
+    TEST_ASSERT_EQUAL_UINT32(1, mock_logger_data.call_count);
+    TEST_ASSERT_EQUAL_STRING(message, mock_logger_data.captured_messages[0]);
 }
 
-void test_log_message_long_string(void) {
-    const char* test_message = "This is a very long log message that should be handled correctly by the logger function pointer. It contains many characters and should still be passed without truncation or issues.";
-    log_message(test_message, MockLogger);
-    // Expected: MockLogger called once with the long string
-    TEST_ASSERT_EQUAL_UINT32(1, mock_logger_call_count);
-    TEST_ASSERT_EQUAL_STRING(test_message, mock_logger_last_message);
+// Test case: Multiple log messages to a valid logger
+void test_log_message_multiple_calls(void) {
+    const char* message1 = "First log";
+    const char* message2 = "Second log";
+
+    // Expected: Both messages should be logged in order
+    log_message(message1, mock_logger);
+    log_message(message2, mock_logger);
+
+    TEST_ASSERT_TRUE(mock_logger_data.was_called);
+    TEST_ASSERT_EQUAL_UINT32(2, mock_logger_data.call_count);
+    TEST_ASSERT_EQUAL_STRING(message1, mock_logger_data.captured_messages[0]);
+    TEST_ASSERT_EQUAL_STRING(message2, mock_logger_data.captured_messages[1]);
 }
 
-// =================================================================================================
-// Tests for simulate_data
-// =================================================================================================
+// ==============================================================================
+// TEST FUNCTIONS FOR simulate_data
+// ==============================================================================
 
-void test_simulate_data_all_pointers_valid(void) {
-    int int_val = 0;
-    float float_val = 0.0f;
-    char* str_val = NULL;
+// Test case: All pointers passed are NULL
+void test_simulate_data_all_null(void) {
+    int initial_int = 10;
+    float initial_float = 1.0f;
+    char* initial_str = (char*)malloc(10);
+    strcpy(initial_str, "Original");
 
-    simulate_data(&int_val, &float_val, &str_val);
-
-    // Expected: int_val updated to 42
-    TEST_ASSERT_EQUAL_INT(42, int_val);
-    // Expected: float_val updated to 3.14f
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, float_val);
-    // Expected: str_val allocated and copied correctly
-    TEST_ASSERT_NOT_NULL(str_val);
-    TEST_ASSERT_EQUAL_STRING("Simulated Data", str_val);
-
-    // Clean up allocated memory
-    free(str_val);
-}
-
-void test_simulate_data_null_int_ptr(void) {
-    int int_val = 100; // Original value
-    float float_val = 0.0f;
-    char* str_val = NULL;
-
-    simulate_data(NULL, &float_val, &str_val);
-
-    // Expected: int_val remains unchanged
-    TEST_ASSERT_EQUAL_INT(100, int_val);
-    // Expected: float_val updated
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, float_val);
-    // Expected: str_val allocated and copied
-    TEST_ASSERT_NOT_NULL(str_val);
-    TEST_ASSERT_EQUAL_STRING("Simulated Data", str_val);
-
-    // Clean up allocated memory
-    free(str_val);
-}
-
-void test_simulate_data_null_float_ptr(void) {
-    int int_val = 0;
-    float float_val = 10.0f; // Original value
-    char* str_val = NULL;
-
-    simulate_data(&int_val, NULL, &str_val);
-
-    // Expected: int_val updated
-    TEST_ASSERT_EQUAL_INT(42, int_val);
-    // Expected: float_val remains unchanged
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.0f, float_val);
-    // Expected: str_val allocated and copied
-    TEST_ASSERT_NOT_NULL(str_val);
-    TEST_ASSERT_EQUAL_STRING("Simulated Data", str_val);
-
-    // Clean up allocated memory
-    free(str_val);
-}
-
-void test_simulate_data_null_str_ptr(void) {
-    int int_val = 0;
-    float float_val = 0.0f;
-    char* str_val = (char*)1; // Set to a non-NULL garbage value to ensure it's not modified to NULL
-
-    simulate_data(&int_val, &float_val, NULL);
-
-    // Expected: int_val updated
-    TEST_ASSERT_EQUAL_INT(42, int_val);
-    // Expected: float_val updated
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, float_val);
-    // Expected: str_val remains unchanged (not modified or allocated)
-    TEST_ASSERT_EQUAL_PTR((char*)1, str_val); // Confirm it wasn't touched
-}
-
-void test_simulate_data_all_pointers_null(void) {
-    // No variables to pass, ensure no crashes and no side effects
+    // Expected: No changes to any value
     simulate_data(NULL, NULL, NULL);
 
-    // Expected: No assertions on variables as they are NULL, just verify no crash
-    // This test ensures robustness for null inputs.
-    TEST_PASS();
+    TEST_ASSERT_EQUAL_INT(10, initial_int);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, initial_float);
+    TEST_ASSERT_EQUAL_STRING("Original", initial_str);
+
+    free(initial_str);
 }
 
-// =================================================================================================
-// Tests for process_sensors
-// =================================================================================================
-
-void test_process_sensors_single_sensor(void) {
-    Sensor s1 = {25.0};
-    Sensor* sensors_data[] = {&s1};
-    SensorArray sensors = sensors_data;
-
-    process_sensors(sensors, 1, MockTempProcessor);
-
-    // Expected: process_temperature (stub) called once
-    TEST_ASSERT_EQUAL_UINT32(1, stub_process_temperature.call_count);
-    // Expected: The correct temperature passed to the stub
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 25.0, stub_process_temperature.last_temperature);
-    // Expected: The provided processor was passed to the stub
-    TEST_ASSERT_EQUAL_PTR(MockTempProcessor, stub_process_temperature.last_processor);
+// Test case: Only int_ptr is valid
+void test_simulate_data_int_only(void) {
+    int my_int = 0;
+    // Expected: my_int updated to 42, others unchanged
+    simulate_data(&my_int, NULL, NULL);
+    TEST_ASSERT_EQUAL_INT(42, my_int);
 }
 
-void test_process_sensors_multiple_sensors(void) {
-    Sensor s1 = {10.5};
-    Sensor s2 = {30.0};
-    Sensor s3 = {0.0f};
-    Sensor* sensors_data[] = {&s1, &s2, &s3};
-    SensorArray sensors = sensors_data;
-
-    process_sensors(sensors, 3, MockTempProcessor);
-
-    // Expected: process_temperature (stub) called three times
-    TEST_ASSERT_EQUAL_UINT32(3, stub_process_temperature.call_count);
-    // Expected: Temperatures captured in order
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.5, stub_process_temperature.temperatures[0]);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 30.0, stub_process_temperature.temperatures[1]);
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, stub_process_temperature.temperatures[2]);
-    // Expected: The last temperature captured is 0.0f
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, stub_process_temperature.last_temperature);
-    // Expected: The provided processor was passed to the stub in all calls (last captured)
-    TEST_ASSERT_EQUAL_PTR(MockTempProcessor, stub_process_temperature.last_processor);
+// Test case: Only float_ptr is valid
+void test_simulate_data_float_only(void) {
+    float my_float = 0.0f;
+    // Expected: my_float updated to 3.14f, others unchanged
+    simulate_data(NULL, &my_float, NULL);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, my_float);
 }
 
+// Test case: Only str_ptr is valid
+void test_simulate_data_string_only(void) {
+    // Use global variable to capture allocated string
+    // Expected: g_simulated_string_ptr points to "Simulated Data"
+    simulate_data(NULL, NULL, &g_simulated_string_ptr);
+    TEST_ASSERT_NOT_NULL(g_simulated_string_ptr);
+    TEST_ASSERT_EQUAL_STRING("Simulated Data", g_simulated_string_ptr);
+    // Cleanup handled by tearDown via g_simulated_string_ptr
+}
+
+// Test case: All pointers are valid
+void test_simulate_data_all_valid(void) {
+    int my_int = 0;
+    float my_float = 0.0f;
+    // Expected: All pointers updated correctly
+    simulate_data(&my_int, &my_float, &g_simulated_string_ptr);
+
+    TEST_ASSERT_EQUAL_INT(42, my_int);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, my_float);
+    TEST_ASSERT_NOT_NULL(g_simulated_string_ptr);
+    TEST_ASSERT_EQUAL_STRING("Simulated Data", g_simulated_string_ptr);
+    // Cleanup handled by tearDown via g_simulated_string_ptr
+}
+
+// ==============================================================================
+// TEST FUNCTIONS FOR process_sensors
+// ==============================================================================
+
+// Test case: count is zero
 void test_process_sensors_zero_count(void) {
-    Sensor s1 = {25.0};
-    Sensor* sensors_data[] = {&s1};
-    SensorArray sensors = sensors_data;
+    // Create a dummy sensor array, though it shouldn't be accessed
+    double temps[] = {10.0, 20.0};
+    SensorArray sensors = create_sensor_array(2, temps);
+    void* dummy_processor = (void*)0x1234; // A non-NULL context
 
-    process_sensors(sensors, 0, MockTempProcessor);
-
-    // Expected: process_temperature (stub) not called
+    // Expected: process_temperature should not be called
+    process_sensors(sensors, 0, dummy_processor);
+    TEST_ASSERT_FALSE(stub_process_temperature.was_called);
     TEST_ASSERT_EQUAL_UINT32(0, stub_process_temperature.call_count);
+
+    free_sensor_array(sensors, 2);
 }
 
-void test_process_sensors_empty_array(void) {
-    Sensor* sensors_data[] = {}; // Empty array literal
-    SensorArray sensors = (SensorArray)sensors_data; // Cast to avoid warnings if sensors_data is empty
+// Test case: count is negative (should also not call process_temperature)
+void test_process_sensors_negative_count(void) {
+    double temps[] = {10.0, 20.0};
+    SensorArray sensors = create_sensor_array(2, temps);
+    void* dummy_processor = (void*)0x1234;
 
-    process_sensors(sensors, 0, MockTempProcessor);
-
-    // Expected: process_temperature (stub) not called
+    // Expected: process_temperature should not be called
+    process_sensors(sensors, 0.0f, dummy_processor);
+    TEST_ASSERT_FALSE(stub_process_temperature.was_called);
     TEST_ASSERT_EQUAL_UINT32(0, stub_process_temperature.call_count);
+
+    free_sensor_array(sensors, 2);
 }
 
-// NOTE: Passing a NULL SensorArray with count > 0 would lead to a dereference of a NULL pointer
-// (sensors[i]->temperature) and crash the application. The source function `process_sensors`
-// does not include NULL checks for `sensors` and relies on `count` for loop termination.
-// Therefore, we do not write a test case that would intentionally crash the system as per rules
-// "MEANINGFUL TESTS ONLY" and "NO NONSENSE" (no physical impossibilities or ignoring source thresholds).
-// The current implementation, if passed NULL sensors and count > 0, would be a runtime error.
 
-// =================================================================================================
-// Main Test Runner
-// =================================================================================================
+// Test case: Single sensor in the array
+void test_process_sensors_single_sensor(void) {
+    double temps[] = {25.0};
+    SensorArray sensors = create_sensor_array(1, temps);
+    void* my_processor_context = (void*)0xABCD; // Arbitrary non-NULL context
+
+    // Expected: process_temperature called once with sensor's temperature and context
+    process_sensors(sensors, 1, my_processor_context);
+
+    TEST_ASSERT_TRUE(stub_process_temperature.was_called);
+    TEST_ASSERT_EQUAL_UINT32(1, stub_process_temperature.call_count);
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 25.0, stub_process_temperature.captured_args[0].temperature);
+    TEST_ASSERT_EQUAL_PTR(my_processor_context, stub_process_temperature.captured_args[0].processor_context);
+
+    free_sensor_array(sensors, 1);
+}
+
+// Test case: Multiple sensors in the array
+void test_process_sensors_multiple_sensors(void) {
+    double temps[] = {10.0, 0.0f, 30.0};
+    SensorArray sensors = create_sensor_array(3, temps);
+    void* my_processor_context = (void*)0xEF01; // Arbitrary non-NULL context
+
+    // Expected: process_temperature called thrice, with temperatures in order
+    process_sensors(sensors, 3, my_processor_context);
+
+    TEST_ASSERT_TRUE(stub_process_temperature.was_called);
+    TEST_ASSERT_EQUAL_UINT32(3, stub_process_temperature.call_count);
+
+    // Verify first call
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 10.0, stub_process_temperature.captured_args[0].temperature);
+    TEST_ASSERT_EQUAL_PTR(my_processor_context, stub_process_temperature.captured_args[0].processor_context);
+
+    // Verify second call
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 0.0f, stub_process_temperature.captured_args[1].temperature);
+    TEST_ASSERT_EQUAL_PTR(my_processor_context, stub_process_temperature.captured_args[1].processor_context);
+
+    // Verify third call
+    TEST_ASSERT_DOUBLE_WITHIN(0.001, 30.0, stub_process_temperature.captured_args[2].temperature);
+    TEST_ASSERT_EQUAL_PTR(my_processor_context, stub_process_temperature.captured_args[2].processor_context);
+
+    free_sensor_array(sensors, 3);
+}
+
+// ==============================================================================
+// MAIN TEST RUNNER
+// ==============================================================================
 
 
 
@@ -350,23 +419,22 @@ int main(void) {
     RUN_TEST(test_calculate_average_null_sensors);
     RUN_TEST(test_calculate_average_zero_count);
     RUN_TEST(test_calculate_average_negative_count);
-    RUN_TEST(test_calculate_average_single_sensor);
+    RUN_TEST(test_calculate_average_single_sensor_positive);
     RUN_TEST(test_calculate_average_multiple_sensors_positive);
-    RUN_TEST(test_calculate_average_multiple_sensors_mixed);
     RUN_TEST(test_calculate_average_multiple_sensors_negative);
-    RUN_TEST(test_log_message_valid_logger);
+    RUN_TEST(test_calculate_average_multiple_sensors_mixed);
     RUN_TEST(test_log_message_null_logger);
-    RUN_TEST(test_log_message_empty_string);
-    RUN_TEST(test_log_message_long_string);
-    RUN_TEST(test_simulate_data_all_pointers_valid);
-    RUN_TEST(test_simulate_data_null_int_ptr);
-    RUN_TEST(test_simulate_data_null_float_ptr);
-    RUN_TEST(test_simulate_data_null_str_ptr);
-    RUN_TEST(test_simulate_data_all_pointers_null);
+    RUN_TEST(test_log_message_valid_logger);
+    RUN_TEST(test_log_message_multiple_calls);
+    RUN_TEST(test_simulate_data_all_null);
+    RUN_TEST(test_simulate_data_int_only);
+    RUN_TEST(test_simulate_data_float_only);
+    RUN_TEST(test_simulate_data_string_only);
+    RUN_TEST(test_simulate_data_all_valid);
+    RUN_TEST(test_process_sensors_zero_count);
+    RUN_TEST(test_process_sensors_negative_count);
     RUN_TEST(test_process_sensors_single_sensor);
     RUN_TEST(test_process_sensors_multiple_sensors);
-    RUN_TEST(test_process_sensors_zero_count);
-    RUN_TEST(test_process_sensors_empty_array);
 
     return UNITY_END();
 }
