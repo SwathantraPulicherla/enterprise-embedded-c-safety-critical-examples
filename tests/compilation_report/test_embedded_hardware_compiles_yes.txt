@@ -1,9 +1,0 @@
-Validation Report for test_embedded_hardware.c
-Quality: Medium
-Compiles: True
-Realistic: True
-Issues: 2
-
-Issues:
-- Test test_15: contradictory assertions for variables {'gpio_read_pin(&mock_gpio, 0'}
-- Test test_16: contradictory assertions for variables {'gpio_read_pin(&mock_gpio, 15'}
