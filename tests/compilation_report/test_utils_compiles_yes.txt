@@ -1,4 +1,4 @@
-Validation Report for test_communication_protocols.c
+Validation Report for test_utils.c
 Quality: High
 Compiles: True
 Realistic: True

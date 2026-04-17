@@ -1,391 +1,472 @@
 /* test_sensor.c – Auto-generated Expert Unity Tests */
 #include "unity.h"
 #include <stdlib.h> // For malloc, free
-#include <string.h> // For strncpy
-#include <stdio.h>  // For printf
+#include <string.h> // For strncpy, memset
+#include <stdio.h>  // For printf (not stubbed, but contextual)
+#include <stdbool.h> // For bool type in stubs
+#include <stdint.h>  // For uint32_t in stubs
 
-// Include the header file for the module under test.
-// This is critical to get the definitions of Sensor, SensorStatus, SensorData, and function prototypes.
-// sensor.c includes sensor.h, so we must include it here.
+// Include the header for the module under test to get struct definitions, etc.
+// This assumes sensor.h is available in the include path and defines Sensor,
+// SensorStatus enum, and TempProcessor function pointer.
 #include "sensor.h"
 
-// --- Inferred SENSOR_NAME_MAX_LEN from sensor.c ---
-// The source code uses sizeof(sensor->name) - 1 for strncpy.
-// If Sensor.name is declared as char name[X], then sizeof(sensor->name) is X.
-// Let's assume a common embedded name length of 32 for the char array.
-#ifndef SENSOR_NAME_MAX_LEN
-#define SENSOR_NAME_MAX_LEN 32
-#endif
+// ====================================================================
+// Mock/Stub Definitions for External Dependencies
+//
+// As per rules: ONLY for listed external dependencies.
+// These stubs allow control over external function behavior and capture calls.
+// ====================================================================
 
-// --- Mock for TempProcessor function pointer ---
-// This is an internal mock within the test file to capture parameters
-// and call counts when a function pointer is invoked by the code under test.
-static float mock_processor_last_temp;
-static int mock_processor_call_count;
+// --- Malloc Stub ---
+typedef struct {
+    void* actual_allocated_ptr; // Stores the real pointer returned by calloc
+    uint32_t call_count;
+    size_t last_size;
+    bool should_fail; // Configuration to simulate malloc failure
+} malloc_stub_t;
+static malloc_stub_t malloc_stub = {0};
 
+// Mock function for malloc. Redirects calls via #define.
+void* mock_malloc(size_t size) {
+    malloc_stub.call_count++;
+    malloc_stub.last_size = size;
+    if (malloc_stub.should_fail) {
+        malloc_stub.actual_allocated_ptr = NULL; // No allocation on failure
+        return NULL;
+    }
+    // Allocate real memory using calloc to ensure it's zero-initialized
+    // This allows subsequent tests on the allocated Sensor object to be valid.
+    malloc_stub.actual_allocated_ptr = calloc(1, size);
+    return malloc_stub.actual_allocated_ptr;
+}
+#define malloc mock_malloc // Redirect malloc to our mock
+
+// --- Free Stub ---
+typedef struct {
+    uint32_t call_count;
+    void* last_ptr; // Captures the pointer passed to free
+} free_stub_t;
+static free_stub_t free_stub = {0};
+
+// Mock function for free. Redirects calls via #define.
+void mock_free(void* ptr) {
+    free_stub.call_count++;
+    free_stub.last_ptr = ptr;
+    if (ptr != NULL) {
+        // Free the real memory that was allocated by mock_malloc
+        free(ptr);
+    }
+}
+#define free mock_free // Redirect free to our mock
+
+// --- Strncpy Stub ---
+typedef struct {
+    uint32_t call_count;
+    char* captured_dest;
+    const char* captured_src;
+    size_t captured_n;
+} strncpy_stub_t;
+static strncpy_stub_t strncpy_stub = {0};
+
+// Mock function for strncpy. Redirects calls via #define.
+char* mock_strncpy(char* dest, const char* src, size_t n) {
+    strncpy_stub.call_count++;
+    strncpy_stub.captured_dest = dest;
+    strncpy_stub.captured_src = src;
+    strncpy_stub.captured_n = n;
+    return strncpy(dest, src, n); // Call the real strncpy for actual string manipulation
+}
+#define strncpy mock_strncpy // Redirect strncpy to our mock
+
+// --- TempProcessor Stub ---
+// This is for the function pointer passed to process_temperature.
+typedef struct {
+    uint32_t call_count;
+    float last_temp; // Captures the temperature passed to the processor
+} temp_processor_stub_t;
+static temp_processor_stub_t temp_processor_stub = {0};
+
+// Mock function for the TempProcessor function pointer type.
 void mock_temp_processor(float temp) {
-    mock_processor_last_temp = temp;
-    mock_processor_call_count++;
+    temp_processor_stub.call_count++;
+    temp_processor_stub.last_temp = temp;
 }
 
-// --- Setup and Teardown ---
-// Ensures a clean state before each test and resets any mocks.
+// NOTE: printf is NOT stubbed as per absolute mandate.
+// Any output from printf will go to stdout during test execution.
+// Assertions on its output or call count are not possible in this framework setup.
+
+// ====================================================================
+// Test Setup and Teardown
+//
+// Ensure complete isolation between tests by resetting all stubs and
+// test state before and after each test.
+// ====================================================================
+
 void setUp(void) {
-    // Reset internal mock state for TempProcessor for test isolation
-    mock_processor_last_temp = 0.0f;
-    mock_processor_call_count = 0;
+    // Reset all stub control structures to their default (zero-initialized) state
+    // This ensures no state from a previous test pollutes the current test.
+    memset(&malloc_stub, 0, sizeof(malloc_stub));
+    memset(&free_stub, 0, sizeof(free_stub));
+    memset(&strncpy_stub, 0, sizeof(strncpy_stub));
+    memset(&temp_processor_stub, 0, sizeof(temp_processor_stub));
+
+    // Configure default stub behaviors for the upcoming test
+    malloc_stub.should_fail = false; // Malloc succeeds by default
 }
 
 void tearDown(void) {
-    // Reset internal mock state for TempProcessor for test isolation
-    mock_processor_last_temp = 0.0f;
-    mock_processor_call_count = 0;
+    // Reset all stub control structures again after each test
+    // This is a robust practice to ensure cleanup even if a test fails midway.
+    memset(&malloc_stub, 0, sizeof(malloc_stub));
+    memset(&free_stub, 0, sizeof(free_stub));
+    memset(&strncpy_stub, 0, sizeof(strncpy_stub));
+    memset(&temp_processor_stub, 0, sizeof(temp_processor_stub));
 }
 
 // ====================================================================
-// Test Cases for create_sensor
-// Sensor* create_sensor(int id, const char* name)
+// Test Cases for create_sensor(int id, const char* name)
 // ====================================================================
 
-void test_create_sensor_valid_input_short_name(void) {
-    // Test case: Create a sensor with valid ID and a short name.
-    Sensor* sensor = create_sensor(1, "TestSensor");
-    // Expected: Sensor object should be allocated successfully.
+// Test creating a sensor with valid, mid-range ID and a typical name.
+void test_create_sensor_normal_valid(void) {
+    int id = 101;
+    const char* name = "Engine Temp Sensor";
+    Sensor* sensor = create_sensor(id, name);
+
+    // Expected: Sensor pointer is not NULL, indicating successful allocation.
     TEST_ASSERT_NOT_NULL(sensor);
-    // Expected: ID should match the input value.
-    TEST_ASSERT_EQUAL_INT(1, sensor->id);
-    // Expected: Name should be correctly copied and null-terminated.
-    TEST_ASSERT_EQUAL_STRING("TestSensor", sensor->name);
-    // Expected: Temperature should be initialized to 0.0f.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->temperature);
-    // Expected: Status should be initialized to STATUS_OK.
+    // Expected: Malloc was called once to allocate the Sensor struct.
+    TEST_ASSERT_EQUAL_UINT32(1, malloc_stub.call_count);
+    // Expected: Malloc was called with the correct size for a Sensor struct.
+    TEST_ASSERT_EQUAL_UINT32(sizeof(Sensor), malloc_stub.last_size);
+    // Expected: The ID member is correctly assigned.
+    TEST_ASSERT_EQUAL_INT(id, sensor->id);
+    // Expected: The name string is correctly copied and null-terminated.
+    TEST_ASSERT_EQUAL_STRING(name, sensor->name);
+    // Expected: Strncpy was called once during name copying.
+    TEST_ASSERT_EQUAL_UINT32(1, strncpy_stub.call_count);
+    // Expected: Default temperature is initialized to 0.0f.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, sensor->temperature);
+    // Expected: Default status is STATUS_OK.
     TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
-    // Expected: Union float_value should be initialized to 0.0f.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->data.float_value);
-    // Cleanup: Free the allocated sensor memory.
-    free_sensor(sensor);
+    // Expected: Union member float_value is initialized to 0.0f.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, sensor->data.float_value);
+
+    free_sensor(sensor); // Clean up allocated memory after the test
 }
 
-void test_create_sensor_valid_input_max_length_name(void) {
-    // Test case: Create a sensor with a name exactly at the maximum allowed length.
-    char long_name[SENSOR_NAME_MAX_LEN];
-    memset(long_name, 'A', SENSOR_NAME_MAX_LEN - 1);
-    long_name[SENSOR_NAME_MAX_LEN - 1] = '\0'; // Manually ensure null termination
-    Sensor* sensor = create_sensor(2, long_name);
-    // Expected: Sensor object should be allocated successfully.
+// Test creating a sensor with a name that is exactly the maximum allowed length.
+void test_create_sensor_max_len_name(void) {
+    int id = 102;
+    // Determine the max name length based on the Sensor struct's name array size.
+    Sensor temp_sensor_for_size; // Temporary instance to get sizeof() member
+    size_t max_name_len = sizeof(temp_sensor_for_size.name) - 1; // Subtract 1 for null terminator
+
+    char long_name[max_name_len + 1]; // +1 for the actual null terminator for the string literal
+    memset(long_name, 'X', max_name_len); // Fill with characters
+    long_name[max_name_len] = '\0'; // Null-terminate the input string
+
+    Sensor* sensor = create_sensor(id, long_name);
+
+    // Expected: Sensor is successfully created.
     TEST_ASSERT_NOT_NULL(sensor);
-    // Expected: ID should match the input value.
-    TEST_ASSERT_EQUAL_INT(2, sensor->id);
-    // Expected: Name should be correctly copied and null-terminated.
+    // Expected: The name is copied exactly as provided and null-terminated.
     TEST_ASSERT_EQUAL_STRING(long_name, sensor->name);
-    // Cleanup: Free the allocated sensor memory.
+    // Expected: The last character in the buffer (before the explicit null) is the last character of the input string.
+    TEST_ASSERT_EQUAL_CHAR('X', sensor->name[max_name_len - 1]);
+    // Expected: The explicit null-terminator is correctly placed at the end of the buffer.
+    TEST_ASSERT_EQUAL_CHAR('\0', sensor->name[max_name_len]);
+
     free_sensor(sensor);
 }
 
-void test_create_sensor_valid_input_name_too_long(void) {
-    // Test case: Create a sensor with a name longer than the buffer capacity.
-    const char* really_long_name = "ThisIsAReallyLongSensorNameThatExceedsTheMaximumLengthBufferCapacity";
-    char expected_name[SENSOR_NAME_MAX_LEN];
-    strncpy(expected_name, really_long_name, SENSOR_NAME_MAX_LEN - 1);
-    expected_name[SENSOR_NAME_MAX_LEN - 1] = '\0'; // Manually null terminate for comparison
-    Sensor* sensor = create_sensor(3, really_long_name);
-    // Expected: Sensor object should be allocated successfully.
+// Test creating a sensor with a name longer than the maximum allowed length, ensuring truncation.
+void test_create_sensor_name_truncation(void) {
+    int id = 103;
+    Sensor temp_sensor_for_size;
+    size_t max_name_len = sizeof(temp_sensor_for_size.name) - 1;
+
+    char very_long_name[max_name_len + 10]; // Input string is longer than the buffer
+    memset(very_long_name, 'Y', sizeof(very_long_name) - 1); // Fill with characters
+    very_long_name[sizeof(very_long_name) - 1] = '\0'; // Null-terminate the input string
+
+    Sensor* sensor = create_sensor(id, very_long_name);
+
+    // Expected: Sensor is successfully created.
     TEST_ASSERT_NOT_NULL(sensor);
-    // Expected: ID should match the input value.
-    TEST_ASSERT_EQUAL_INT(3, sensor->id);
-    // Expected: Name should be truncated to SENSOR_NAME_MAX_LEN - 1 characters and null-terminated.
-    TEST_ASSERT_EQUAL_STRING(expected_name, sensor->name);
-    // Cleanup: Free the allocated sensor memory.
+
+    char expected_name_buffer[max_name_len + 1]; // Buffer for the expected truncated string
+    strncpy(expected_name_buffer, very_long_name, max_name_len); // Manually truncate for comparison
+    expected_name_buffer[max_name_len] = '\0'; // Explicitly null-terminate
+
+    // Expected: The name in the sensor is truncated and matches the expected truncated string.
+    TEST_ASSERT_EQUAL_STRING(expected_name_buffer, sensor->name);
+    // Expected: The last position of the buffer (max_name_len index) contains the null terminator.
+    TEST_ASSERT_EQUAL_CHAR('\0', sensor->name[max_name_len]);
+
     free_sensor(sensor);
 }
 
-void test_create_sensor_valid_input_empty_name(void) {
-    // Test case: Create a sensor with an empty name.
-    Sensor* sensor = create_sensor(4, "");
-    // Expected: Sensor object should be allocated successfully.
-    TEST_ASSERT_NOT_NULL(sensor);
-    // Expected: ID should match the input value.
-    TEST_ASSERT_EQUAL_INT(4, sensor->id);
-    // Expected: Name should be an empty string.
-    TEST_ASSERT_EQUAL_STRING("", sensor->name);
-    // Cleanup: Free the allocated sensor memory.
-    free_sensor(sensor);
+// Test `create_sensor` behavior when `malloc` fails to allocate memory.
+void test_create_sensor_malloc_failure(void) {
+    malloc_stub.should_fail = true; // Configure the mock malloc to return NULL
+    Sensor* sensor = create_sensor(104, "Failure Sensor");
+
+    // Expected: `create_sensor` returns NULL when malloc fails.
+    TEST_ASSERT_NULL(sensor);
+    // Expected: Malloc was still attempted once.
+    TEST_ASSERT_EQUAL_UINT32(1, malloc_stub.call_count);
+    // Expected: Strncpy and other initializations were NOT called/attempted on a NULL sensor.
+    TEST_ASSERT_EQUAL_UINT32(0, strncpy_stub.call_count);
 }
 
 // ====================================================================
-// Test Cases for update_temperature
-// void update_temperature(Sensor* sensor, float temp)
+// Test Cases for update_temperature(Sensor* sensor, float temp)
 // ====================================================================
 
+// Test updating temperature with a value well within the 'OK' range (25.0f).
+void test_update_temperature_normal_ok(void) {
+    Sensor* sensor = create_sensor(201, "Normal Temp Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 25.0f; // Below 30.0f threshold
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature member is updated to the new value.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected: Status remains STATUS_OK as temp <= 30.0f.
+    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
+    // Expected: Union float_value also updated to the new temperature.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test updating temperature exactly at the warning threshold (30.0f).
+void test_update_temperature_warning_boundary_exact_30(void) {
+    Sensor* sensor = create_sensor(202, "Boundary Temp Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 30.0f; // Not strictly greater than 30.0f
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature updated.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected: Status is STATUS_OK because `temp > 30.0f` condition is false.
+    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test updating temperature just above the warning threshold (30.1f).
+void test_update_temperature_warning_boundary_above_30(void) {
+    Sensor* sensor = create_sensor(203, "Warning Temp Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 30.1f; // Strictly greater than 30.0f
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature updated.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected: Status is STATUS_WARNING because `temp > 30.0f` condition is true.
+    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test updating temperature at the error threshold (40.0f) and expose the bug.
+// CRITICAL BUG EXPOSURE: The `else if (temp > 40.0f)` branch in the source code
+// is unreachable due to the preceding `if (temp > 30.0f)`.
+// Temperatures like 40.0f will satisfy `temp > 30.0f` first, setting status to WARNING.
+void test_update_temperature_error_boundary_exact_40_bug(void) {
+    Sensor* sensor = create_sensor(204, "Buggy Error Temp Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 40.0f; // Logically should lead to ERROR if intended, but hits WARNING.
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature updated.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected (due to bug): Status is STATUS_WARNING, NOT STATUS_ERROR.
+    // This assertion confirms the current (buggy) behavior of the source.
+    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test updating temperature just above the error threshold (40.1f) and expose the bug.
+// CRITICAL BUG EXPOSURE: Same logic applies as `test_update_temperature_error_boundary_exact_40_bug`.
+void test_update_temperature_error_boundary_above_40_bug(void) {
+    Sensor* sensor = create_sensor(205, "Buggy Error Temp Sensor 2");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 40.1f; // Logically should lead to ERROR, but hits WARNING.
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature updated.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected (due to bug): Status is STATUS_WARNING, NOT STATUS_ERROR.
+    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test updating temperature with a low, realistic negative value (0.0f).
+void test_update_temperature_low_value(void) {
+    Sensor* sensor = create_sensor(206, "Cold Temp Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+
+    float temp = 0.0f; // Not greater than 30.0f
+    update_temperature(sensor, temp);
+
+    // Expected: Temperature updated.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->temperature);
+    // Expected: Status is STATUS_OK.
+    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp, sensor->data.float_value);
+
+    free_sensor(sensor);
+}
+
+// Test calling `update_temperature` with a NULL sensor pointer.
+// Should handle gracefully and not crash.
 void test_update_temperature_null_sensor(void) {
-    // Test case: Call update_temperature with a NULL sensor pointer.
-    // Expected: Function should handle NULL sensor gracefully without crashing.
+    // Record initial stub states to confirm no unexpected interactions.
+    uint32_t initial_malloc_calls = malloc_stub.call_count;
+    uint32_t initial_free_calls = free_stub.call_count;
+
+    // Call with NULL pointer.
     update_temperature(NULL, 25.0f);
-    // No direct assertion possible, but test passes if no crash occurs.
-}
 
-void test_update_temperature_status_ok_nominal(void) {
-    // Test case: Update temperature with a nominal value that results in STATUS_OK.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor); // Pre-condition check: ensure sensor creation worked.
-
-    update_temperature(sensor, 25.0f); // Expected: 25.0f is not > 30.0f and not > 40.0f
-    // Expected: Temperature should be updated to the input value.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 25.0f, sensor->temperature);
-    // Expected: Status should be STATUS_OK.
-    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
-    // Expected: Union float_value should be updated to the input temperature.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 25.0f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_ok_lower_boundary(void) {
-    // Test case: Update temperature with the lowest realistic positive value for STATUS_OK.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 0.0f); // Expected: 0.0f is not > 30.0f and not > 40.0f
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->temperature);
-    // Expected: Status should be STATUS_OK.
-    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_ok_negative_temp(void) {
-    // Test case: Update temperature with a negative value that results in STATUS_OK.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 0.0f); // Expected: 0.0f is not > 30.0f and not > 40.0f
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->temperature);
-    // Expected: Status should be STATUS_OK.
-    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0.0f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_ok_upper_boundary(void) {
-    // Test case: Update temperature at the upper boundary for STATUS_OK (inclusive).
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 30.0f); // Expected: 30.0f is NOT > 30.0f
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 30.0f, sensor->temperature);
-    // Expected: Status should be STATUS_OK.
-    TEST_ASSERT_EQUAL_INT(STATUS_OK, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 30.0f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_warning_lower_boundary(void) {
-    // Test case: Update temperature just above the STATUS_OK threshold (exclusive), resulting in WARNING.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 30.1f); // Expected: 30.1f IS > 30.0f
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 30.1f, sensor->temperature);
-    // Expected: Status should be STATUS_WARNING.
-    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 30.1f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_warning_mid_range(void) {
-    // Test case: Update temperature in the mid-range for STATUS_WARNING.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 35.0f); // Expected: 35.0f IS > 30.0f
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 35.0f, sensor->temperature);
-    // Expected: Status should be STATUS_WARNING.
-    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 35.0f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_warning_above_40_bug_demonstration(void) {
-    // CRITICAL BUG DEMONSTRATION:
-    // Test case: Update temperature above 40.0f. Due to the 'if-else if' ordering in source,
-    // `if (temp > 30.0f)` takes precedence. Since 40.1f > 30.0f, the status becomes WARNING.
-    // The `else if (temp > 40.0f)` condition is never evaluated for values greater than 30.0f.
-    // This means STATUS_ERROR is unreachable via the update_temperature function as written.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 40.1f);
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 40.1f, sensor->temperature);
-    // Expected: Status is WARNING, revealing the bug in the conditional logic.
-    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 40.1f, sensor->data.float_value);
-    free_sensor(sensor);
-}
-
-void test_update_temperature_status_warning_extreme_temp_bug_demonstration(void) {
-    // CRITICAL BUG DEMONSTRATION:
-    // Test case: Update temperature with a very high value (e.g., 100.0f).
-    // This demonstrates that even extreme temperatures will result in WARNING, not ERROR,
-    // due to the precedence of `if (temp > 30.0f)`.
-    Sensor* sensor = create_sensor(1, "TempSensor");
-    TEST_ASSERT_NOT_NULL(sensor);
-
-    update_temperature(sensor, 100.0f);
-    // Expected: Temperature should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 100.0f, sensor->temperature);
-    // Expected: Status is WARNING, further confirming the bug.
-    TEST_ASSERT_EQUAL_INT(STATUS_WARNING, sensor->status);
-    // Expected: Union value should be updated.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 100.0f, sensor->data.float_value);
-    free_sensor(sensor);
+    // Expected: No crashes.
+    // Expected: No side effects on memory allocation/deallocation (stubs not called).
+    TEST_ASSERT_EQUAL_UINT32(initial_malloc_calls, malloc_stub.call_count);
+    TEST_ASSERT_EQUAL_UINT32(initial_free_calls, free_stub.call_count);
+    // Cannot assert on internal state of a NULL sensor object.
 }
 
 // ====================================================================
-// Test Cases for print_sensor
-// void print_sensor(const Sensor* sensor)
+// Test Cases for print_sensor(const Sensor* sensor)
 // ====================================================================
-// Note: Direct assertion of printf output is not possible with Unity
-// without redirection techniques (e.g., freopen to a buffer).
-// These tests primarily ensure the function does not crash with various inputs.
 
-void test_print_sensor_null_sensor(void) {
-    // Test case: Call print_sensor with a NULL sensor pointer.
-    // Expected: Function should handle NULL sensor gracefully without crashing.
+// Test printing a valid sensor object.
+// As `printf` is not stubbed, this test primarily checks for crashes and ensures
+// the function can be called with valid data. Output will go to stdout.
+void test_print_sensor_valid(void) {
+    Sensor* sensor = create_sensor(301, "Print Sensor");
+    TEST_ASSERT_NOT_NULL(sensor);
+    update_temperature(sensor, 28.5f); // Set some values for printing
+
+    // Expected: Function executes without crashing.
+    print_sensor(sensor);
+    // No direct assertions on `printf` output possible here as per rules.
+    // Manual inspection of stdout during test run would confirm output format.
+
+    free_sensor(sensor);
+}
+
+// Test printing a NULL sensor pointer.
+// Should handle gracefully by returning early and not crashing.
+void test_print_sensor_null(void) {
+    // Expected: Function executes without crashing.
     print_sensor(NULL);
-}
-
-void test_print_sensor_valid_sensor_ok_status(void) {
-    // Test case: Call print_sensor with a valid sensor in STATUS_OK.
-    Sensor* sensor = create_sensor(10, "DisplaySensorOK");
-    TEST_ASSERT_NOT_NULL(sensor);
-    update_temperature(sensor, 20.5f); // Set a realistic temp, status remains OK
-    // Expected: Function should execute without crashing and print appropriate info.
-    print_sensor(sensor);
-    free_sensor(sensor);
-}
-
-void test_print_sensor_valid_sensor_warning_status(void) {
-    // Test case: Call print_sensor with a valid sensor in STATUS_WARNING.
-    Sensor* sensor = create_sensor(11, "DisplaySensorWARN");
-    TEST_ASSERT_NOT_NULL(sensor);
-    update_temperature(sensor, 35.0f); // Set to WARNING status
-    // Expected: Function should execute without crashing and print appropriate info.
-    print_sensor(sensor);
-    free_sensor(sensor);
-}
-
-void test_print_sensor_valid_sensor_error_status(void) {
-    // Test case: Call print_sensor with a valid sensor in STATUS_ERROR.
-    // (Note: STATUS_ERROR cannot be reached via `update_temperature` due to the bug,
-    // so we manually set it here to test the `print_sensor` logic for this state).
-    Sensor* sensor = create_sensor(12, "DisplaySensorERROR");
-    TEST_ASSERT_NOT_NULL(sensor);
-    // Manually set temperature and data to reflect an error condition.
-    sensor->temperature = 45.0f;
-    sensor->data.float_value = 45.0f;
-    sensor->status = STATUS_ERROR; // Directly set status to ERROR for print test
-    // Expected: Function should execute without crashing and print appropriate info.
-    print_sensor(sensor);
-    free_sensor(sensor);
+    // Expected: No `printf` calls would occur (due to the `if (sensor == NULL)` check).
+    // No direct assertions on `printf` output possible here.
 }
 
 // ====================================================================
-// Test Cases for process_temperature
-// void process_temperature(float temp, TempProcessor processor)
+// Test Cases for process_temperature(float temp, TempProcessor processor)
 // ====================================================================
 
+// Test processing temperature with a valid function pointer callback.
 void test_process_temperature_valid_processor(void) {
-    // Test case: Call process_temperature with a valid function pointer.
-    float test_temp = 15.5f;
-    process_temperature(test_temp, mock_temp_processor);
-    // Expected: The mock processor function should be called once.
-    TEST_ASSERT_EQUAL_INT(1, mock_processor_call_count);
-    // Expected: The correct temperature value should be passed to the processor.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, test_temp, mock_processor_last_temp);
+    float temp_to_process = 35.5f;
+
+    // Call process_temperature, passing our mock function as the processor.
+    process_temperature(temp_to_process, mock_temp_processor);
+
+    // Expected: The mock processor function was called exactly once.
+    TEST_ASSERT_EQUAL_UINT32(1, temp_processor_stub.call_count);
+    // Expected: The mock processor received the correct temperature value.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, temp_to_process, temp_processor_stub.last_temp);
 }
 
-void test_process_temperature_another_valid_processor_call(void) {
-    // Test case: Call process_temperature again with a valid function pointer and different temp.
-    // This also implicitly tests `setUp` and `tearDown` resetting the mock.
-    float test_temp = 75.0f;
-    process_temperature(test_temp, mock_temp_processor);
-    // Expected: The mock processor function should be called once (since setUp resets count).
-    TEST_ASSERT_EQUAL_INT(1, mock_processor_call_count);
-    // Expected: The correct temperature value should be passed to the processor.
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, test_temp, mock_processor_last_temp);
-}
-
+// Test processing temperature with a NULL function pointer callback.
+// Should handle gracefully by not attempting to dereference NULL and not crashing.
 void test_process_temperature_null_processor(void) {
-    // Test case: Call process_temperature with a NULL function pointer.
-    // Expected: Function should handle NULL processor gracefully without crashing.
-    process_temperature(20.0f, NULL);
-    // Expected: The mock processor function should not be called.
-    TEST_ASSERT_EQUAL_INT(0, mock_processor_call_count);
+    float temp_to_process = 20.0f;
+
+    // Call process_temperature with a NULL function pointer.
+    process_temperature(temp_to_process, NULL);
+
+    // Expected: The mock processor was NOT called (because the input was NULL).
+    TEST_ASSERT_EQUAL_UINT32(0, temp_processor_stub.call_count);
+    // Expected: No crash, function returns immediately due to `if (processor != NULL)` check.
 }
 
 // ====================================================================
-// Test Cases for free_sensor
-// void free_sensor(Sensor* sensor)
+// Test Cases for free_sensor(Sensor* sensor)
 // ====================================================================
 
-void test_free_sensor_valid_sensor(void) {
-    // Test case: Free a valid sensor object.
-    Sensor* sensor = create_sensor(100, "DisposableSensor");
-    TEST_ASSERT_NOT_NULL(sensor); // Pre-condition check
-    // Expected: free_sensor should free the allocated memory without crashing.
+// Test freeing a valid sensor object.
+void test_free_sensor_valid(void) {
+    Sensor* sensor = create_sensor(401, "Sensor to Free");
+    TEST_ASSERT_NOT_NULL(sensor);
+    TEST_ASSERT_EQUAL_UINT32(1, malloc_stub.call_count); // Ensure allocation happened
+
+    // Capture the pointer that was originally returned by mock_malloc for comparison.
+    void* allocated_ptr = malloc_stub.actual_allocated_ptr;
+
     free_sensor(sensor);
-    // Cannot assert actual memory freeing (e.g., memory becomes available),
-    // but the test passes if no crash or runtime error occurs.
+
+    // Expected: The `free` mock was called exactly once.
+    TEST_ASSERT_EQUAL_UINT32(1, free_stub.call_count);
+    // Expected: The `free` mock was called with the exact pointer that was originally allocated.
+    TEST_ASSERT_EQUAL_PTR(allocated_ptr, free_stub.last_ptr);
 }
 
-void test_free_sensor_null_sensor(void) {
-    // Test case: Call free_sensor with a NULL input.
-    // Expected: free_sensor should handle NULL input gracefully without crashing.
+// Test freeing a NULL sensor pointer.
+// Should handle gracefully by returning early and not attempting to free NULL.
+void test_free_sensor_null(void) {
+    // Expected: The `free` mock was NOT called (due to the `if (sensor != NULL)` check).
     free_sensor(NULL);
-    // No crash indicates success.
+    TEST_ASSERT_EQUAL_UINT32(0, free_stub.call_count);
 }
 
 // ====================================================================
 // Main Test Runner
+//
+// This function aggregates all test cases and runs them using Unity.
 // ====================================================================
+
 
 
 int main(void) {
     UNITY_BEGIN();
 
-    RUN_TEST(test_create_sensor_valid_input_short_name);
-    RUN_TEST(test_create_sensor_valid_input_max_length_name);
-    RUN_TEST(test_create_sensor_valid_input_name_too_long);
-    RUN_TEST(test_create_sensor_valid_input_empty_name);
+    RUN_TEST(test_create_sensor_normal_valid);
+    RUN_TEST(test_create_sensor_max_len_name);
+    RUN_TEST(test_create_sensor_name_truncation);
+    RUN_TEST(test_create_sensor_malloc_failure);
+    RUN_TEST(test_update_temperature_normal_ok);
+    RUN_TEST(test_update_temperature_warning_boundary_exact_30);
+    RUN_TEST(test_update_temperature_warning_boundary_above_30);
+    RUN_TEST(test_update_temperature_error_boundary_exact_40_bug);
+    RUN_TEST(test_update_temperature_error_boundary_above_40_bug);
+    RUN_TEST(test_update_temperature_low_value);
     RUN_TEST(test_update_temperature_null_sensor);
-    RUN_TEST(test_update_temperature_status_ok_nominal);
-    RUN_TEST(test_update_temperature_status_ok_lower_boundary);
-    RUN_TEST(test_update_temperature_status_ok_negative_temp);
-    RUN_TEST(test_update_temperature_status_ok_upper_boundary);
-    RUN_TEST(test_update_temperature_status_warning_lower_boundary);
-    RUN_TEST(test_update_temperature_status_warning_mid_range);
-    RUN_TEST(test_update_temperature_status_warning_above_40_bug_demonstration);
-    RUN_TEST(test_update_temperature_status_warning_extreme_temp_bug_demonstration);
-    RUN_TEST(test_print_sensor_null_sensor);
-    RUN_TEST(test_print_sensor_valid_sensor_ok_status);
-    RUN_TEST(test_print_sensor_valid_sensor_warning_status);
-    RUN_TEST(test_print_sensor_valid_sensor_error_status);
+    RUN_TEST(test_print_sensor_valid);
+    RUN_TEST(test_print_sensor_null);
     RUN_TEST(test_process_temperature_valid_processor);
-    RUN_TEST(test_process_temperature_another_valid_processor_call);
     RUN_TEST(test_process_temperature_null_processor);
-    RUN_TEST(test_free_sensor_valid_sensor);
-    RUN_TEST(test_free_sensor_null_sensor);
+    RUN_TEST(test_free_sensor_valid);
+    RUN_TEST(test_free_sensor_null);
 
     return UNITY_END();
 }

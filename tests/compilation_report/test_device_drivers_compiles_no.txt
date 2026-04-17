@@ -1,8 +1,0 @@
-Validation Report for test_device_drivers.c
-Quality: Low
-Compiles: False
-Realistic: True
-Issues: 1
-
-Issues:
-- Duplicate function definitions: ['for', 'for']

@@ -1,0 +1,9 @@
+Validation Report for test_communication_protocols.c
+Quality: Low
+Compiles: False
+Realistic: True
+Issues: 2
+
+Issues:
+- Duplicate function definitions: ['if', 'if']
+- Source has state machine but tests don't verify state transitions
